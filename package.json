@@ -4,6 +4,8 @@
   "description": "Live CAN telemetry, session logging, replay, and health dashboard for a 2016 Mercedes Sprinter.",
   "main": "main.js",
   "scripts": {
+    "postinstall": "node scripts/setup-hooks.mjs",
+    "setup:hooks": "node scripts/setup-hooks.mjs",
     "start": "electron .",
     "demo": "electron . --demo",
     "kiosk": "electron . --kiosk",
@@ -27,6 +29,7 @@
     "asar": true,
     "files": [
       "main.js",
+      "preload.js",
       "package.json"
     ],
     "extraResources": [

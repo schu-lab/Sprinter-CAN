@@ -8,3 +8,30 @@ vendor/
 runtime/
 dist/
 dist-pi/
+
+# AI assistant / tooling local config (never push these)
+.claude/
+.codex/
+.cursor/
+.aider*
+.chatgpt/
+.openai/
+CLAUDE.local.md
+GEMINI.md
+.gemini/
+
+# Secrets & credentials (never push these)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.pkcs12
+*.crt
+secrets.json
+credentials.json
+*.secret
+*.secrets
+.netrc

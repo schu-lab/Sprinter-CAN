@@ -1,0 +1,5 @@
+# Shell scripts and git hooks must stay LF, or they fail to run on Linux /
+# Raspberry Pi with "bad interpreter: /bin/sh^M". Pin them regardless of the
+# committer's platform or core.autocrlf setting.
+*.sh        text eol=lf
+.githooks/* text eol=lf

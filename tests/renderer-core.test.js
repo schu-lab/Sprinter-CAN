@@ -76,10 +76,18 @@ test('vehicle systems use seven external native buttons without a wireframe', ()
   )[1];
   assert.equal((chassis.match(/<ellipse /g) || []).length, 2);
   assert.doesNotMatch(chassis, /<path /);
-  assert.match(
+
+  // Every highlight shares the same cyan accent — no per-system color override
+  // (Body/Cabin used to be green).
+  assert.match(css, /\.vehicle-highlight\s*\{[^}]*color: var\(--cyan\)/);
+  assert.doesNotMatch(
     css,
     /\.vehicle-highlight\[data-highlight-system="body"\]\s*\{\s*color: var\(--green\)/,
   );
+
+  // Body/Cabin highlights only the rear cargo (back half), not the whole van.
+  const body = html.match(/data-highlight-system="body">([\s\S]*?)<\/g>/)[1];
+  assert.match(body, /Back half/);
 });
 
 test('report retains raw network inventory and all learned ECU sources', () => {

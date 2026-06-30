@@ -10,7 +10,6 @@ import queue
 import signal
 import sys
 import threading
-import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -81,6 +80,8 @@ class CollectorService:
         self.broker.publish(event)
 
     def command(self, command: dict) -> dict:
+        if not isinstance(command, dict):
+            return {"ok": False, "error": "command must be a JSON object"}
         name = command.get("cmd")
         if name == "poll" and isinstance(command.get("on"), bool):
             with self._lock:
@@ -256,7 +257,18 @@ class ServiceHandler(SimpleHTTPRequestHandler):
             self.send_error(404)
             return
         try:
-            length = min(int(self.headers.get("Content-Length", "0")), 65536)
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 0:
+                raise ValueError
+        except ValueError:
+            self._send_json({"ok": False, "error": "invalid Content-Length"}, status=400)
+            return
+        if length > 65536:
+            # Do not leave an unread request body on a persistent connection.
+            self.close_connection = True
+            self._send_json({"ok": False, "error": "request body too large"}, status=413)
+            return
+        try:
             command = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             self._send_json({"ok": False, "error": "invalid JSON"}, status=400)

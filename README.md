@@ -33,6 +33,40 @@ Python collector service
 
 ---
 
+## Preview
+
+The screenshots below are from **demo mode** (`npm run demo`) — a simulated
+running engine, so no hardware is needed to reproduce them.
+
+### Vehicle systems
+
+Live OBD evidence mapped onto a photograph of the actual van, with a severity
+sorted operator-warning rail on the right.
+
+![Vehicle systems view with the engine region highlighted on the van photo](docs/screenshots/systems.png)
+
+### Live telemetry
+
+Decoded OBD-II Mode 01 PIDs on cards with live values and sparklines.
+
+![Decoded telemetry cards with live values and sparklines](docs/screenshots/live.png)
+
+### Bus monitor
+
+Every raw CAN frame seen, as hex, with rolling rate and age. The functional
+request (`0x7DF`) and ECM response (`0x7E8`) rows are highlighted.
+
+![Raw CAN bus monitor table](docs/screenshots/bus.png)
+
+### PID discovery
+
+Per-module PID availability: cyan = decoded by the app, amber = supported but
+not yet decoded, grey = catalogued but unavailable from that ECU.
+
+![PID availability discovery overlay](docs/screenshots/discover.png)
+
+---
+
 ## Architecture
 
 1. **`can_service.py` / `sprinter_can.service`** — long-running collector.
@@ -226,9 +260,12 @@ Mode 01 PID `0x01` is polled automatically; if any module reports the MIL lamp
 on or stored DTCs, a red **● CEL (n)** badge appears in the header. (The actual
 fault codes — Mode 03 — and diesel UDS data are a planned next step.)
 
-### Export Report
-**Export Report** downloads a self-contained **HTML health-scan report** (open in
-any browser, print to PDF): summary KPIs, vehicle-system status, MIL/DTC status,
+### Export PDF
+**Export PDF** produces a self-contained **health-scan report**. In the Electron
+app it renders a real PDF and prompts for a save location; in a plain browser it
+opens the equivalent self-contained HTML in a new tab to print to PDF (falling
+back to an HTML download if the popup is blocked). Either way the report contains
+summary KPIs, vehicle-system status, MIL/DTC status,
 a per-module capability map, a live-telemetry snapshot with heuristic health
 flags (OK / NOTICE / CHECK), and a complete inventory of every arbitration ID
 seen during the app window. The inventory retains decoded and undecoded traffic,

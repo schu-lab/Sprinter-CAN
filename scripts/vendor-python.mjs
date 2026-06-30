@@ -42,23 +42,15 @@ if (!python) {
 if (existsSync(target)) rmSync(target, { recursive: true, force: true });
 mkdirSync(target, { recursive: true });
 
-let installed = false;
-for (const executable of [python]) {
-  const result = spawnSync(executable, [
-    '-m', 'pip', 'install',
-    '--disable-pip-version-check',
-    '--no-cache-dir',
-    '--no-compile',
-    '--target', target,
-    '-r', join(root, 'requirements.txt'),
-  ], { cwd: root, stdio: 'inherit' });
-  if (!result.error && result.status === 0) {
-    installed = true;
-    break;
-  }
-}
-
-if (!installed) {
+const install = spawnSync(python, [
+  '-m', 'pip', 'install',
+  '--disable-pip-version-check',
+  '--no-cache-dir',
+  '--no-compile',
+  '--target', target,
+  '-r', join(root, 'requirements.txt'),
+], { cwd: root, stdio: 'inherit' });
+if (install.error || install.status !== 0) {
   throw new Error('Could not vendor the Python dependencies.');
 }
 

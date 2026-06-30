@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sprinter CAN Telemetry</title>
-  <link rel="stylesheet" href="styles.css?v=14" />
+  <link rel="stylesheet" href="styles.css?v=15" />
 </head>
 <body>
   <!-- ===================== HEADER / STATUS STRIP ===================== -->
@@ -246,14 +246,11 @@
                          rx="65" ry="68" />
               </g>
               <g class="vehicle-highlight" data-highlight-system="body">
+                <!-- Back half of the van: the rear cargo box behind the cab. -->
                 <path class="vehicle-highlight-region"
-                      d="M24 402Q32 376 55 353L109 337L250 286L342 108
-                         Q366 76 408 57Q445 41 474 38L930 85Q953 88 958 113
-                         L972 365Q973 386 960 403L950 447Q942 382 922 351
-                         Q907 329 884 329Q850 328 832 365Q819 392 817 459
-                         L655 508L493 548Q487 468 463 416Q439 367 382 365
-                         Q324 364 294 410Q273 443 269 506L226 540L73 541
-                         Q49 526 42 504Z" />
+                      d="M500 70L930 85Q953 88 958 113L959 400
+                         Q956 435 942 447L505 452Q495 430 496 130
+                         Q497 95 500 70Z" />
               </g>
               <g class="vehicle-highlight" data-highlight-system="diagnostics">
                 <path class="vehicle-highlight-region"
@@ -327,9 +324,16 @@
       <button id="btn-pause" class="btn">Pause</button>
       <button id="btn-resume" class="btn" disabled>Resume</button>
       <button id="btn-clear" class="btn">Clear</button>
-      <button id="btn-record" class="btn">Start Log</button>
+      <button id="btn-record" class="btn"
+              title="Record this session (raw CAN + decoded telemetry + events) to a folder on disk">Start Log</button>
       <button id="btn-discover" class="btn btn-accent">Discover PIDs</button>
-      <button id="btn-report" class="btn btn-accent">Export Report</button>
+      <button id="btn-report" class="btn btn-accent">Export PDF</button>
+    </div>
+
+    <div class="log-info" id="log-info">
+      <span class="log-info-label" id="log-info-label">Logs →</span>
+      <span class="log-info-path" id="log-info-path" title="">—</span>
+      <button class="btn btn-mini" id="btn-open-logs" type="button" hidden>Open folder</button>
     </div>
 
     <label class="poll-toggle" id="poll-toggle">
@@ -411,7 +415,7 @@
     </div>
   </div>
 
-  <script src="core.js?v=13"></script>
-  <script src="app.js?v=14"></script>
+  <script src="core.js?v=15"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>

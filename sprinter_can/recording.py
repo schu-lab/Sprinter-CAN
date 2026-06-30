@@ -245,6 +245,7 @@ class SessionRecorder:
                 "type": "recording",
                 "active": self._active,
                 "session_id": self._session_id,
+                "base_directory": str(self.base_directory),
                 "path": str(self._session_directory) if self._session_directory else None,
                 "started_utc": self._started_utc,
                 "frames": self._frames,

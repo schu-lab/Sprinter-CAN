@@ -262,5 +262,47 @@ class ReplayTests(unittest.TestCase):
             self.assertEqual(pid_event["value"], 1726.0)
 
 
+class IsoTpTests(unittest.TestCase):
+    # EGT bank 1: [0x41, 0x78, bitmap, s1_hi, s1_lo, s2_hi, s2_lo, …]. Sensor 1
+    # raw 0x0BB8 = 3000 -> 3000/10 - 40 = 260 °C.
+    SERVICE = [0x41, 0x78, 0x03, 0x0B, 0xB8, 0x0A, 0x28, 0x00, 0x00, 0x00, 0x00]
+
+    def test_first_frame_requests_flow_control_then_completes(self):
+        reassembler = can_bridge.IsoTpReassembler()
+        first = [0x10, len(self.SERVICE), *self.SERVICE[0:6]]
+        payload, flow_control = reassembler.feed(0x7E8, first)
+        self.assertIsNone(payload)
+        self.assertEqual(flow_control, 0x7E0)  # physical addr = response - 8
+
+        consecutive = [0x21, *self.SERVICE[6:], 0x55]
+        payload, flow_control = reassembler.feed(0x7E8, consecutive)
+        self.assertIsNone(flow_control)
+        self.assertEqual(payload, self.SERVICE)
+
+    def test_reassembled_egt_payload_decodes(self):
+        metrics = can_bridge.decode_metrics([0x00, *self.SERVICE], reassembled=True)
+        self.assertEqual(len(metrics), 1)
+        self.assertEqual(metrics[0]["pid"], 0x78)
+        self.assertEqual(metrics[0]["unit"], "°C")
+        self.assertAlmostEqual(metrics[0]["value"], 260.0)
+
+    def test_multi_frame_pid_is_not_decoded_from_a_single_frame(self):
+        # The same PID arriving as a (malformed) single frame must not decode.
+        self.assertEqual(can_bridge.decode_metrics([0x03, 0x41, 0x78, 0x0B]), [])
+
+    def test_demo_multiframe_round_trips_through_reassembler(self):
+        service = can_bridge._demo_multiframe_service(0x78, 12.0)
+        self.assertEqual(service[:2], [0x41, 0x78])
+        reassembler = can_bridge.IsoTpReassembler()
+        completed = None
+        for frame in can_bridge._isotp_frames(service):
+            payload, _ = reassembler.feed(0x7E8, frame)
+            if payload is not None:
+                completed = payload
+        self.assertEqual(completed, service)
+        metrics = can_bridge.decode_metrics([0x00, *completed], reassembled=True)
+        self.assertTrue(metrics and metrics[0]["pid"] == 0x78)
+
+
 if __name__ == "__main__":
     unittest.main()

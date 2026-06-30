@@ -3,6 +3,7 @@ import json
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -35,6 +36,15 @@ class CollectorHTTPServiceTests(unittest.TestCase):
                 stopped = self._post(base, {"cmd": "record", "on": False})
                 self.assertFalse(stopped["recording"]["active"])
                 self.assertTrue(Path(stopped["recording"]["path"]).exists())
+
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    self._post(base, [])
+                with raised.exception as response:
+                    self.assertEqual(response.code, 400)
+                    self.assertEqual(
+                        json.load(response)["error"],
+                        "command must be a JSON object",
+                    )
             finally:
                 service.close()
                 thread.join(timeout=1)

@@ -61,7 +61,7 @@
       path: 'Vehicle.Powertrain.CombustionEngine',
       description: 'Engine operating state, air path, temperatures and torque.',
       pids: [0x04, 0x05, 0x0B, 0x0C, 0x0F, 0x10, 0x11, 0x23, 0x24, 0x33,
-        0x3C, 0x43, 0x44, 0x5C, 0x5D, 0x61, 0x62, 0x63],
+        0x3C, 0x43, 0x44, 0x5C, 0x5D, 0x61, 0x62, 0x63, 0x78],
     },
     {
       id: 'fuel',
@@ -70,7 +70,7 @@
       path: 'Vehicle.Powertrain.FuelSystem + Sprinter.Emissions',
       description: 'Fuel delivery, tank level, EGR and available exhaust evidence.',
       pids: [0x06, 0x07, 0x0A, 0x10, 0x21, 0x24, 0x2C, 0x2D, 0x2F,
-        0x30, 0x31, 0x3C, 0x44, 0x5E],
+        0x30, 0x31, 0x3C, 0x44, 0x5E, 0x78],
     },
     {
       id: 'electrical',
@@ -276,6 +276,10 @@
     0x63: {
       summary: 'Reference torque used as the basis for percentage torque PIDs.',
       watch: 'This provides scale for demanded and actual torque percentages.',
+    },
+    0x78: {
+      summary: 'Exhaust gas temperature, bank 1 sensor 1 (multi-frame ISO-TP).',
+      watch: 'High EGT tracks load and DPF regeneration; confirm scaling against the OM642.',
     },
   });
 
@@ -591,14 +595,10 @@
   const api = {
     telemetryKey,
     compareTelemetryEntries,
-    decimalsFor,
     formatValue,
     computeBusLoad,
     classifyCanId,
     VEHICLE_SYSTEMS,
-    PID_DETAILS,
-    PID_CATALOG,
-    pidSupportBlock,
     buildPidAvailability,
     telemetryDetailFor,
     STATUS_LABELS,

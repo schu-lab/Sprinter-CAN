@@ -83,6 +83,11 @@ PIDS = {
     0x61: ("Driver dmd torque", "%",    1, lambda d: d[3] - 125),
     0x62: ("Actual torque",     "%",    1, lambda d: d[3] - 125),
     0x63: ("Ref torque",        "Nm",   2, lambda d: 256 * d[3] + d[4]),
+    # --- Multi-frame (ISO-TP) diesel PIDs: these exceed one CAN frame, so they
+    # only decode after reassembly. Byte A (d[3]) is a "supported sensor"
+    # bitmap; sensor 1's temperature is the two bytes after it. Confirm the
+    # exact layout against real OM642 captures before trusting more sensors.
+    0x78: ("EGT bank 1 S1",     "°C",   9, lambda d: (256 * d[4] + d[5]) / 10 - 40),
 }
 
 # PID 0x24 carries two 16-bit measurements in one response. The metric key is
@@ -178,7 +183,19 @@ def _complete_single_frame(data, data_length):
     return payload_length >= 2 + data_length and len(data) >= 1 + payload_length
 
 
-def decode_metrics(data):
+def _payload_ready(data, data_length, reassembled):
+    """True when `data` holds a PID plus its expected value bytes.
+
+    Single frames must pass the ISO-TP single-frame length check. Reassembled
+    multi-frame payloads arrive as [0x00, 0x41, pid, A, B, …] (a synthetic PCI
+    byte so the same value lambdas apply), so we only need enough bytes.
+    """
+    if reassembled:
+        return len(data) >= 3 + data_length
+    return _complete_single_frame(data, data_length)
+
+
+def decode_metrics(data, reassembled=False):
     """Decode a Mode-01 response into zero or more telemetry metric dictionaries."""
     if len(data) < 4 or data[1] != 0x41:
         return []
@@ -186,7 +203,7 @@ def decode_metrics(data):
     entry = PIDS.get(pid)
     if entry:
         name, unit, data_length, fn = entry
-        if not _complete_single_frame(data, data_length):
+        if not _payload_ready(data, data_length, reassembled):
             return []
         try:
             value = round(float(fn(data)), 2)
@@ -199,7 +216,7 @@ def decode_metrics(data):
     if not compound:
         return []
     _, data_length, metrics = compound
-    if not _complete_single_frame(data, data_length):
+    if not _payload_ready(data, data_length, reassembled):
         return []
     decoded = []
     try:
@@ -214,6 +231,47 @@ def decode_metrics(data):
     except (IndexError, ZeroDivisionError, ValueError):
         return []
     return decoded
+
+
+# ISO-TP (ISO 15765-2) reassembly: OBD responses larger than 7 bytes arrive as a
+# First Frame plus Consecutive Frames. Larger diesel PIDs (EGT, DPF, NOx, SCR)
+# need this. Single frames are handled by the existing single-frame path.
+FLOW_CONTROL = [0x30, 0x00, 0x00, PAD, PAD, PAD, PAD, PAD]
+
+
+class IsoTpReassembler:
+    """Reassemble multi-frame OBD responses, keyed by responding CAN ID."""
+
+    def __init__(self):
+        self._buffers = {}
+
+    def feed(self, arb_id, data):
+        """Feed one received frame.
+
+        Returns (payload, flow_control_id):
+          * payload — the completed service bytes [0x41, pid, …] when a transfer
+            finishes (else None).
+          * flow_control_id — the physical address to send a Flow Control to
+            after a First Frame (else None). For response 0x7E8 that is 0x7E0.
+        """
+        if not data:
+            return None, None
+        kind = data[0] & 0xF0
+        if kind == 0x10:  # First Frame: 12-bit length, 6 payload bytes follow.
+            total = ((data[0] & 0x0F) << 8) | (data[1] if len(data) > 1 else 0)
+            self._buffers[arb_id] = {"total": total, "bytes": list(data[2:8])}
+            return None, arb_id - 8
+        if kind == 0x20:  # Consecutive Frame.
+            buf = self._buffers.get(arb_id)
+            if buf is None:
+                return None, None
+            buf["bytes"].extend(data[1:8])
+            if len(buf["bytes"]) >= buf["total"]:
+                payload = buf["bytes"][:buf["total"]]
+                del self._buffers[arb_id]
+                return payload, None
+            return None, None
+        return None, None  # Single frame / unknown — handled elsewhere.
 
 
 def decode_response(data):
@@ -260,10 +318,9 @@ def decode_monitors(ecu, data):
             "b": data[4], "c": data[5], "d": data[6]}
 
 
-def emit_obd_response(ecu, data, state, timestamp=None):
-    """Decode and emit all supported events found in one OBD response frame."""
-    event_time = timestamp or time.time()
-    for decoded in decode_metrics(data):
+def emit_pid_metrics(ecu, metrics, event_time):
+    """Emit one 'pid' event per decoded metric dictionary."""
+    for decoded in metrics:
         event = {
             "type": "pid",
             "ecu": ecu,
@@ -276,6 +333,20 @@ def emit_obd_response(ecu, data, state, timestamp=None):
         if decoded["metric"]:
             event["metric"] = decoded["metric"]
         emit(event)
+
+
+def emit_reassembled(ecu, payload, timestamp=None):
+    """Emit telemetry from a reassembled multi-frame service payload."""
+    event_time = timestamp or time.time()
+    # Prepend a synthetic single-frame PCI byte so the value lambdas (which
+    # index from the raw frame) apply unchanged to the reassembled bytes.
+    emit_pid_metrics(ecu, decode_metrics([0x00, *payload], reassembled=True), event_time)
+
+
+def emit_obd_response(ecu, data, state, timestamp=None):
+    """Decode and emit all supported events found in one single-frame response."""
+    event_time = timestamp or time.time()
+    emit_pid_metrics(ecu, decode_metrics(data), event_time)
     supported = decode_supported(ecu, data)
     if supported:
         state.setdefault("supported_pids", set()).update(supported["pids"])
@@ -350,6 +421,9 @@ def run_real(channel, state, poll_period, inter_frame):
         return
 
     mode_condition = threading.Condition()
+    # Serialize all transmits: the poller thread sends requests while the reader
+    # thread sends ISO-TP flow-control frames, and they share one bus handle.
+    tx_lock = threading.Lock()
     bus_ref = {
         "bus": bus,
         "silent": True,
@@ -432,12 +506,27 @@ def run_real(channel, state, poll_period, inter_frame):
             # The Kvaser backend uses separate read/write handles by default,
             # so this can run concurrently with bus.recv() without delaying
             # every request by the receive timeout.
-            active_bus.send(msg, timeout=0.2)
+            with tx_lock:
+                active_bus.send(msg, timeout=0.2)
             return True
         except Exception as e:  # noqa: BLE001
             emit_warn("OBD request delayed (bus busy / TX full): %s" % e)
             time.sleep(0.1)
             return False
+
+    def send_flow_control(physical_id):
+        """Reply to an ISO-TP First Frame so the ECU streams the rest."""
+        with mode_condition:
+            active_bus = bus_ref["bus"]
+            if active_bus is None or bus_ref["silent"]:
+                return
+        try:
+            with tx_lock:
+                active_bus.send(can.Message(
+                    arbitration_id=physical_id, is_extended_id=False,
+                    data=list(FLOW_CONTROL)), timeout=0.2)
+        except Exception as e:  # noqa: BLE001
+            emit_warn("ISO-TP flow control send failed: %s" % e)
 
     def do_discover():
         """One-shot scan: ask every module which PIDs it supports."""
@@ -484,6 +573,8 @@ def run_real(channel, state, poll_period, inter_frame):
     poll_thread = threading.Thread(target=poller, daemon=True)
     poll_thread.start()
 
+    reassembler = IsoTpReassembler()
+
     # --- Reader loop ---------------------------------------------------------
     try:
         while not state["stop"]:
@@ -514,9 +605,16 @@ def run_real(channel, state, poll_period, inter_frame):
                 "t": msg.timestamp or time.time(),
             })
             if msg.arbitration_id in RESPONSE_IDS:
-                emit_obd_response(
-                    msg.arbitration_id, data, state, msg.timestamp or time.time(),
-                )
+                event_time = msg.timestamp or time.time()
+                if data and data[0] & 0xF0 in (0x10, 0x20):
+                    payload, flow_control_id = reassembler.feed(
+                        msg.arbitration_id, data)
+                    if flow_control_id is not None:
+                        send_flow_control(flow_control_id)
+                    if payload is not None:
+                        emit_reassembled(msg.arbitration_id, payload, event_time)
+                else:
+                    emit_obd_response(msg.arbitration_id, data, state, event_time)
     finally:
         with mode_condition:
             state["stop"] = True
@@ -627,6 +725,35 @@ def _demo_value_bytes(pid, el):
     return [0x00]
 
 
+def _demo_multiframe_service(pid, el):
+    """Full service payload [0x41, pid, …] for a simulated multi-frame PID."""
+    load = 0.25 + 0.45 * (1 + math.sin(el * 0.45)) / 2
+
+    def temp_bytes(celsius):
+        raw = max(0, min(0xFFFF, int((celsius + 40) * 10)))
+        return [(raw >> 8) & 0xFF, raw & 0xFF]
+
+    if pid == 0x78:  # EGT bank 1; bitmap reports sensors 1 and 2 present.
+        return [0x41, 0x78, 0x03,
+                *temp_bytes(210 + 360 * load),
+                *temp_bytes(190 + 320 * load),
+                0x00, 0x00, 0x00, 0x00]
+    return None
+
+
+def _isotp_frames(service):
+    """Split a service payload into ISO-TP First + Consecutive CAN frames."""
+    total = len(service)
+    frames = [[0x10 | ((total >> 8) & 0x0F), total & 0xFF, *service[0:6]]]
+    rest = service[6:]
+    sequence = 1
+    while rest:
+        frames.append([0x20 | (sequence & 0x0F), *rest[:7]])
+        rest = rest[7:]
+        sequence += 1
+    return [(frame + [PAD] * (8 - len(frame)))[:8] for frame in frames]
+
+
 def run_demo(state, poll_period):
     emit({"type": "status", "connected": True,
           "msg": "DEMO mode — simulated frames, no hardware",
@@ -683,7 +810,17 @@ def run_demo(state, poll_period):
                 emit({"type": "frame", "id": REQUEST_ID, "ext": False,
                       "dlc": 8, "data": req.hex(), "t": now})
 
-                # ECM response frame on 0x7E8.
+                # Multi-frame PIDs (ISO-TP): stream a First + Consecutive frame
+                # pair, then decode the reassembled payload like live capture.
+                service = _demo_multiframe_service(pid, el)
+                if service is not None:
+                    for frame in _isotp_frames(service):
+                        emit({"type": "frame", "id": RESPONSE_ID, "ext": False,
+                              "dlc": 8, "data": bytes(frame).hex(), "t": now})
+                    emit_reassembled(RESPONSE_ID, service, now)
+                    continue
+
+                # ECM single-frame response on 0x7E8.
                 vb = _demo_value_bytes(pid, el)
                 pci = 2 + len(vb)
                 resp = [pci, 0x41, pid] + vb
@@ -718,6 +855,7 @@ def run_replay(filename, state, speed=1.0, max_gap=1.0):
     emit({"type": "status", "connected": True, "mode": "replay",
           "msg": "Replay: %s @ %.2fx" % (filename, speed), "poll": False})
     previous_timestamp = None
+    reassembler = IsoTpReassembler()
     try:
         for msg in reader:
             if state["stop"]:
@@ -738,7 +876,14 @@ def run_replay(filename, state, speed=1.0, max_gap=1.0):
                 "t": timestamp,
             })
             if msg.arbitration_id in RESPONSE_IDS:
-                emit_obd_response(msg.arbitration_id, data, state, timestamp)
+                # No live bus to flow-control during replay; just reassemble what
+                # was recorded (the original First/Consecutive frames are stored).
+                if data and data[0] & 0xF0 in (0x10, 0x20):
+                    payload, _ = reassembler.feed(msg.arbitration_id, data)
+                    if payload is not None:
+                        emit_reassembled(msg.arbitration_id, payload, timestamp)
+                else:
+                    emit_obd_response(msg.arbitration_id, data, state, timestamp)
     finally:
         reader.stop()
     emit({"type": "status", "connected": False, "mode": "replay",

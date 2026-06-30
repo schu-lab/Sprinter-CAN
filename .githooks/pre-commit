@@ -1,0 +1,61 @@
+#!/bin/sh
+# Pre-commit secret scanner for Sprinter-CAN.
+#
+# Blocks staged secrets/credentials from being committed (and therefore pushed).
+# This is a backstop for .gitignore: it also catches files force-added with
+# `git add -f`, and secret tokens pasted *inside* otherwise-ordinary source.
+#
+# Intentional bypass (use only when you are sure it's a false positive):
+#   git commit --no-verify
+set -u
+
+fail=0
+red() { printf '\033[31m%s\033[0m\n' "$1" 2>/dev/null || printf '%s\n' "$1"; }
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+# 1) Block sensitive filenames even if force-added past .gitignore.
+for f in $staged; do
+  base=$(basename "$f")
+  case "$base" in
+    .env.example|.env.sample|.env.template) : ;;            # templates are fine
+    .env|.env.*)               red "Blocked: $f (env file)"; fail=1 ;;
+    id_rsa|id_dsa|id_ecdsa|id_ed25519) red "Blocked: $f (private SSH key)"; fail=1 ;;
+    *.pem|*.key|*.pfx|*.p12|*.pkcs12|*.keystore|*.jks)
+                               red "Blocked: $f (key / certificate)"; fail=1 ;;
+    credentials.json|secrets.json|*.secret|*.secrets|.netrc)
+                               red "Blocked: $f (credentials file)"; fail=1 ;;
+  esac
+done
+
+# 2) Scan newly-added lines for known secret token shapes.
+added=$(git diff --cached -U0 --diff-filter=ACM | grep '^+' | grep -v '^+++')
+
+scan() { # <regex> <human label>
+  hit=$(printf '%s\n' "$added" | grep -nE -- "$1")
+  if [ -n "$hit" ]; then
+    red "Blocked: looks like $2"
+    printf '%s\n' "$hit" | sed 's/^/   /' | head -3
+    fail=1
+  fi
+}
+
+scan '-----BEGIN [A-Z ]*PRIVATE KEY-----'                       'a private key'
+scan 'AKIA[0-9A-Z]{16}'                                         'an AWS access key id'
+scan 'ASIA[0-9A-Z]{16}'                                         'an AWS temporary key id'
+scan 'gh[pousr]_[0-9A-Za-z]{36}'                                'a GitHub token'
+scan 'github_pat_[0-9A-Za-z_]{22,}'                             'a GitHub fine-grained token'
+scan 'xox[baprs]-[0-9A-Za-z-]{10,}'                             'a Slack token'
+scan 'sk-ant-[0-9A-Za-z_-]{20,}'                                'an Anthropic API key'
+scan 'sk-(proj-)?[0-9A-Za-z_-]{20,}'                            'an OpenAI API key'
+scan 'AIza[0-9A-Za-z_-]{35}'                                    'a Google API key'
+scan 'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}' 'a JWT'
+
+if [ "$fail" -ne 0 ]; then
+  echo
+  red 'Commit aborted by the pre-commit secret scan.'
+  echo 'If this is genuinely a false positive: git commit --no-verify'
+  exit 1
+fi
+exit 0

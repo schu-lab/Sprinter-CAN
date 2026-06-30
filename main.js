@@ -2,10 +2,11 @@
 
 // Electron is intentionally a thin desktop shell. The Python collector owns
 // CAN access, reconnects, recording, replay, and the localhost web service.
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 let win = null;
 let service = null;
@@ -64,8 +65,11 @@ function loadConfig() {
     config.kiosk = true;
   }
 
-  if (!Number.isFinite(Number(config.servicePort)) || Number(config.servicePort) < 0) {
+  const servicePort = Number(config.servicePort);
+  if (!Number.isInteger(servicePort) || servicePort < 0 || servicePort > 65535) {
     config.servicePort = defaults.servicePort;
+  } else {
+    config.servicePort = servicePort;
   }
   if (!Number.isFinite(Number(config.pollPeriodMs)) || Number(config.pollPeriodMs) <= 0) {
     config.pollPeriodMs = defaults.pollPeriodMs;
@@ -204,7 +208,10 @@ function startService() {
         console.error(`[collector] ${line}`));
     });
     child.on('exit', (code, signal) => {
-      if (service === child) service = null;
+      if (service === child) {
+        service = null;
+        serviceUrl = null;
+      }
       if (!quitting) {
         showLaunchError(
           `Collector exited before the app closed (code ${code}` +
@@ -233,6 +240,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
   win.removeMenu();
@@ -266,6 +274,48 @@ function shutdownService() {
     }
   }, 2000);
 }
+
+// Reveal the session-logs folder. The directory is resolved here, in the main
+// process, so the renderer can't ask us to open an arbitrary path.
+ipcMain.handle('open-logs', async () => {
+  const dir = resolveLogDirectory(loadConfig());
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  const error = await shell.openPath(dir);
+  return { ok: !error, path: dir, error: error || undefined };
+});
+
+// Render the health-report HTML to a real PDF via an offscreen window, then let
+// the user choose where to save it (defaulting into the logs folder).
+ipcMain.handle('save-pdf', async (_event, { html, suggestedName }) => {
+  const name = String(suggestedName || 'sprinter-can-report.pdf')
+    .replace(/[^A-Za-z0-9._-]/g, '_');
+  const temporary = path.join(os.tmpdir(), `sprinter-report-${Date.now()}.html`);
+  const pdfWindow = new BrowserWindow({
+    show: false,
+    webPreferences: { sandbox: true, contextIsolation: true, javascript: false },
+  });
+  try {
+    fs.writeFileSync(temporary, String(html), 'utf8');
+    await pdfWindow.loadFile(temporary);
+    const data = await pdfWindow.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Save report as PDF',
+      defaultPath: path.join(resolveLogDirectory(loadConfig()), name),
+      filters: [{ name: 'PDF document', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) return { ok: false, canceled: true };
+    fs.writeFileSync(filePath, data);
+    return { ok: true, path: filePath };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  } finally {
+    pdfWindow.destroy();
+    try { fs.unlinkSync(temporary); } catch {}
+  }
+});
 
 app.whenReady().then(createWindow);
 

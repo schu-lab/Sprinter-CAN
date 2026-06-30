@@ -100,8 +100,6 @@ const state = {
   errored: false,
   connected: false,
   searching: false,         // collector up but no device / reconnecting (hot-plug)
-  busMode: null,            // silent | active | simulated
-  pollOn: false,
   supported: new Map(),     // ecu(int) -> Map(pid(int) -> name|null)
   supportedBlocks: new Map(), // ecu(int) -> Set(base support-PID responses)
   monitors: new Map(),      // ecu(int) -> {mil, dtc_count, b, c, d}
@@ -113,11 +111,7 @@ const state = {
   detailTelemetryKey: null,
   recording: {
     active: false,
-    session_id: null,
-    path: null,
     started_utc: null,
-    frames: 0,
-    samples: 0,
   },
 };
 
@@ -153,6 +147,9 @@ const el = {
   discoverContent: $('discover-content'),
   btnDiscoverClose: $('btn-discover-close'),
   btnRecord: $('btn-record'),
+  logInfoLabel: $('log-info-label'),
+  logInfoPath: $('log-info-path'),
+  btnOpenLogs: $('btn-open-logs'),
   telemetryOverlay: $('telemetry-overlay'),
   btnTelemetryClose: $('btn-telemetry-close'),
   telemetryDetailCode: $('telemetry-detail-code'),
@@ -240,14 +237,12 @@ function handleFrame(msg) {
       firstSeen: now,
       lastSeen: now,
       times: [],
-      prevData: msg.data,
       flashUntil: 0,
       row: null,
     };
     state.ids.set(msg.id, rec);
   }
   if (msg.data !== rec.data) {
-    rec.prevData = rec.data;
     rec.flashUntil = now + 600;
     rec.changes++;
   }
@@ -286,7 +281,6 @@ function handlePid(msg) {
 function handleStatus(msg) {
   if (typeof msg.connected === 'boolean') state.connected = msg.connected;
   if (typeof msg.searching === 'boolean') state.searching = msg.searching;
-  if (typeof msg.mode === 'string') state.busMode = msg.mode;
   if (typeof msg.poll === 'boolean') setPollUI(msg.poll);
 
   if (msg.connected === true) {
@@ -353,6 +347,27 @@ function handleRecording(msg) {
   el.btnRecord.classList.toggle('recording', !!msg.active);
   el.btnRecord.disabled = false;
   el.recordBadge.hidden = !msg.active;
+  updateLogLocation();
+}
+
+// Show where session logs live: the base folder when idle, the live session
+// folder while recording, and the last saved session after a stop.
+function updateLogLocation() {
+  const rec = state.recording;
+  const base = rec.base_directory;
+  if (!base) return;
+  let label = 'Logs →';
+  let path = base;
+  if (rec.active && rec.path) {
+    label = 'Recording →';
+    path = rec.path;
+  } else if (rec.path) {
+    label = 'Last log →';
+    path = rec.path;
+  }
+  el.logInfoLabel.textContent = label;
+  el.logInfoPath.textContent = path;
+  el.logInfoPath.title = `Session logs are stored in ${base}`;
 }
 
 let warnTimer = null;
@@ -990,8 +1005,16 @@ el.btnRecord.addEventListener('click', () => {
   window.bus.send({ cmd: 'record', on: !state.recording.active });
 });
 
+// "Open folder" only works in the Electron shell (needs the main process).
+// In a plain browser the button stays hidden; the path text is still shown.
+if (window.desktop && typeof window.desktop.openLogs === 'function') {
+  el.btnOpenLogs.hidden = false;
+  el.btnOpenLogs.addEventListener('click', () => {
+    Promise.resolve(window.desktop.openLogs()).catch(() => {});
+  });
+}
+
 function setPollUI(on) {
-  state.pollOn = on;
   el.pollCheck.checked = on;
   el.pollLabel.textContent = on ? 'Polling OBD' : 'PID polling off';
 }
@@ -1354,8 +1377,42 @@ window.SprinterReport = Object.freeze({
   buildHTML: buildReportHTML,
 });
 
-el.btnReport.addEventListener('click', () => {
+// Browser/headless fallback: open the self-contained report in a new tab so the
+// user can print it to PDF; if the popup is blocked, download the HTML.
+function exportReportFallback(html, stamp) {
+  try {
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const tab = window.open(url, '_blank');
+    if (tab) {
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      return;
+    }
+    URL.revokeObjectURL(url);
+  } catch { /* fall through to download */ }
+  download(`sprinter-can-report_${stamp}.html`, html, 'text/html');
+}
+
+el.btnReport.addEventListener('click', async () => {
   const d = buildReportData();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  download(`sprinter-can-report_${stamp}.html`, buildReportHTML(d), 'text/html');
+  const html = buildReportHTML(d);
+  // Electron: render a real PDF via the main process and let the user save it.
+  if (window.desktop && typeof window.desktop.savePdf === 'function') {
+    el.btnReport.disabled = true;
+    try {
+      const result = await window.desktop.savePdf(html, `sprinter-can-report_${stamp}.pdf`);
+      if (result && result.ok) {
+        el.connText.textContent = `report saved → ${result.path}`;
+      } else if (result && result.error) {
+        showBanner('error', '⛔ Could not save PDF: ' + result.error);
+      }
+    } catch (error) {
+      showBanner('error', '⛔ Could not save PDF: ' + error.message);
+    } finally {
+      el.btnReport.disabled = false;
+    }
+    return;
+  }
+  exportReportFallback(html, stamp);
 });

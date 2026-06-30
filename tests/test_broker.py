@@ -28,6 +28,17 @@ class EventBrokerTests(unittest.TestCase):
         self.assertEqual(subscriber.get_nowait()["msg"], "second")
         self.assertGreaterEqual(broker.dropped_events, 1)
 
+    def test_snapshot_respects_bounded_subscriber_queue(self):
+        broker = EventBroker(queue_size=1)
+        broker.publish({"type": "status", "connected": True})
+        broker.publish({"type": "recording", "active": False})
+
+        subscriber = broker.subscribe()
+
+        self.assertEqual(subscriber.qsize(), 1)
+        self.assertEqual(subscriber.get_nowait()["type"], "recording")
+        self.assertGreaterEqual(broker.dropped_events, 1)
+
     def test_compound_pid_metrics_are_retained_separately(self):
         broker = EventBroker()
         broker.publish({
