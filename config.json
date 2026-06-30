@@ -1,0 +1,13 @@
+{
+  "python": "python",
+  "channel": 0,
+  "demo": false,
+  "servicePort": 0,
+  "logDirectory": null,
+  "rawLogFormat": "blf",
+  "autoRecord": false,
+  "autoPoll": true,
+  "pollPeriodMs": 1250,
+  "interFrameMs": 25,
+  "kiosk": false
+}

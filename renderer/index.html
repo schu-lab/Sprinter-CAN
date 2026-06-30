@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sprinter CAN Telemetry</title>
+  <link rel="stylesheet" href="styles.css?v=14" />
+</head>
+<body>
+  <!-- ===================== HEADER / STATUS STRIP ===================== -->
+  <header class="status-strip">
+    <div class="brand">
+      <span class="dot" id="conn-dot" data-state="idle"></span>
+      <span class="brand-title">SPRINTER&nbsp;CAN</span>
+      <span class="brand-sub">W906 · ISO 15765-4 · 500k</span>
+      <span class="mil-badge" id="mil-badge" hidden>● CEL</span>
+      <span class="record-badge" id="record-badge" hidden>
+        <i></i><span id="record-elapsed">REC</span>
+      </span>
+    </div>
+
+    <div class="stat">
+      <span class="stat-label">frames</span>
+      <span class="stat-val" id="stat-frames">0</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">frames/sec</span>
+      <span class="stat-val" id="stat-fps">0</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">unique IDs</span>
+      <span class="stat-val" id="stat-ids">0</span>
+    </div>
+
+    <div class="stat busload">
+      <span class="stat-label">bus load (est)</span>
+      <div class="loadbar"><div class="loadbar-fill" id="loadbar-fill"></div></div>
+      <span class="stat-val small" id="stat-load">0.0%</span>
+    </div>
+
+    <div class="scope-wrap" title="bus activity (frames/sec)">
+      <canvas id="scope" width="220" height="40"></canvas>
+    </div>
+
+    <div class="conn-text" id="conn-text">starting…</div>
+  </header>
+
+  <!-- ===================== BANNER (errors / hints) ===================== -->
+  <div class="banner" id="banner" hidden></div>
+
+  <!-- ===================== LEFT VIEW NAVIGATION ===================== -->
+  <nav class="view-nav" aria-label="Dashboard views">
+    <span class="view-nav-kicker">VIEWS</span>
+    <button class="view-nav-btn active" data-page="vehicle" aria-selected="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 15V8h11l4 3h3v4" />
+        <circle cx="7" cy="16" r="2" />
+        <circle cx="18" cy="16" r="2" />
+      </svg>
+      <span>Systems</span>
+    </button>
+    <button class="view-nav-btn" data-page="telemetry" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 13h4l2-7 4 13 2-6h6" />
+      </svg>
+      <span>Live</span>
+    </button>
+    <button class="view-nav-btn" data-page="bus" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="M7 9h3m4 0h3M7 13h2m3 0h5" />
+      </svg>
+      <span>Bus</span>
+    </button>
+  </nav>
+
+  <!-- ===================== PAGE 1: LIVE TELEMETRY ===================== -->
+  <main class="view-page" id="page-telemetry" data-page-panel="telemetry" hidden>
+    <section class="col col-decoded">
+      <div class="col-head">
+        <h2>DECODED TELEMETRY</h2>
+        <span class="col-note">OBD-II Mode 01 — appears as each PID first responds. Enable polling to populate.</span>
+      </div>
+      <div class="cards" id="cards"></div>
+      <div class="empty-hint" id="cards-empty">
+        No decoded PIDs yet. Decoded values come from OBD polling —
+        flip <b>Poll PIDs</b> on (while parked) to request them.
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== PAGE 2: RAW BUS ===================== -->
+  <main class="view-page" id="page-bus" data-page-panel="bus" hidden>
+    <section class="col col-bus">
+      <div class="col-head">
+        <h2>BUS MONITOR</h2>
+        <span class="col-note">Every arbitration ID seen, raw hex. Proprietary broadcast frames are <b>not</b> decoded — there's no DBC.</span>
+      </div>
+      <div class="bus-table-wrap">
+        <table class="bus-table">
+          <thead>
+            <tr>
+              <th class="c-id">ID</th>
+              <th class="c-dlc">DLC</th>
+              <th class="c-data">DATA</th>
+              <th class="c-hz">Hz</th>
+              <th class="c-count">COUNT</th>
+              <th class="c-age">AGE</th>
+            </tr>
+          </thead>
+          <tbody id="bus-body"></tbody>
+        </table>
+        <div class="empty-hint" id="bus-empty">
+          Waiting for frames… On the OBD diagnostic bus, passive traffic may be
+          sparse — it's largely request/response. Check ignition is ON.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== PAGE 3: VEHICLE SYSTEMS ===================== -->
+  <main class="view-page vehicle-page" id="page-vehicle" data-page-panel="vehicle">
+    <section class="vehicle-system-shell">
+      <div class="vehicle-system-head">
+        <div>
+          <span class="eyebrow">2016 SPRINTER 2500 · W906 / NCV3</span>
+          <h1>VEHICLE SYSTEMS</h1>
+          <p>COVESA-inspired signal domains with Sprinter service-system overlays.</p>
+        </div>
+        <div class="overall-status" id="vehicle-overall" data-status="no-data">
+          <span class="status-dot"></span>
+          <span>
+            <small>OBSERVED STATUS</small>
+            <strong id="vehicle-overall-label">NO DATA</strong>
+          </span>
+        </div>
+      </div>
+
+      <div class="vehicle-system-layout">
+        <div class="vehicle-system-main">
+      <div class="vehicle-map-wrap">
+        <div class="vehicle-stage">
+          <div class="system-selector" role="group"
+               aria-label="Select a vehicle system">
+            <button class="system-node" type="button" data-system="engine">
+              <span class="system-node-dot" aria-hidden="true"></span>
+              <span class="system-node-copy">
+                <strong>Engine</strong>
+                <small data-system-state="engine">No data</small>
+              </span>
+              <span class="system-node-chevron" aria-hidden="true">›</span>
+            </button>
+            <button class="system-node" type="button" data-system="fuel">
+              <span class="system-node-dot" aria-hidden="true"></span>
+              <span class="system-node-copy">
+                <strong>Fuel / Emissions</strong>
+                <small data-system-state="fuel">No data</small>
+              </span>
+              <span class="system-node-chevron" aria-hidden="true">›</span>
+            </button>
+            <button class="system-node" type="button" data-system="electrical">
+              <span class="system-node-dot" aria-hidden="true"></span>
+              <span class="system-node-copy">
+                <strong>Electrical</strong>
+                <small data-system-state="electrical">No data</small>
+              </span>
+              <span class="system-node-chevron" aria-hidden="true">›</span>
+            </button>
+            <button class="system-node" type="button" data-system="controls">
+              <span class="system-node-dot" aria-hidden="true"></span>
+              <span class="system-node-copy">
+                <strong>Controls</strong>
+                <small data-system-state="controls">No data</small>
+              </span>
+              <span class="system-node-chevron" aria-hidden="true">›</span>
+            </button>
+            <button class="system-node" type="button" data-system="chassis">
+              <span class="system-node-dot" aria-hidden="true"></span>
+              <span class="system-node-copy">
+                <strong>Chassis</strong>
+                <small data-system-state="chassis">No data</small>
+              </span>
+              <span class="system-node-chevron" aria-hidden="true">›</span>
+            </button>
+            <button class="system-node" type="button" data-system="body">
+              <span class="system-node-dot" aria-hidden="true"></span>
+              <span class="system-node-copy">
+                <strong>Body / Cabin</strong>
+                <small data-system-state="body">No data</small>
+              </span>
+              <span class="system-node-chevron" aria-hidden="true">›</span>
+            </button>
+            <button class="system-node" type="button" data-system="diagnostics">
+              <span class="system-node-dot" aria-hidden="true"></span>
+              <span class="system-node-copy">
+                <strong>Diagnostics</strong>
+                <small data-system-state="diagnostics">No data</small>
+              </span>
+              <span class="system-node-chevron" aria-hidden="true">›</span>
+            </button>
+          </div>
+
+          <figure class="vehicle-photo-frame">
+            <img class="vehicle-photo" src="assets/sprinter-mine.jpg"
+                 alt="2016 Mercedes-Benz Sprinter 2500 4x4" />
+            <svg class="vehicle-highlight-map" viewBox="0 0 1000 658"
+                 preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <defs>
+                <filter id="region-glow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feGaussianBlur stdDeviation="5" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+
+              <g class="vehicle-highlight" data-highlight-system="engine">
+                <path class="vehicle-highlight-region"
+                      d="M24 402Q34 374 60 351L111 336L250 286L335 300
+                         L307 368L274 415L196 444L75 450L39 430Z" />
+              </g>
+              <g class="vehicle-highlight" data-highlight-system="fuel">
+                <path class="vehicle-highlight-region"
+                      d="M625 442L788 407L837 419L824 465L775 493
+                         L653 522L613 489Z" />
+              </g>
+              <g class="vehicle-highlight" data-highlight-system="electrical">
+                <path class="vehicle-highlight-region"
+                      d="M37 360L250 286L421 257L621 250L830 256L958 266
+                         L972 365Q973 386 960 403L950 447Q942 382 922 351
+                         Q907 329 884 329Q850 328 832 365Q819 392 817 459
+                         L655 508L493 548Q487 468 463 416Q439 367 382 365
+                         Q324 364 294 410Q273 443 269 506L226 540L73 541
+                         Q49 526 42 504Z" />
+              </g>
+              <g class="vehicle-highlight" data-highlight-system="controls">
+                <path class="vehicle-highlight-region"
+                      d="M455 116L598 120L612 143L605 314L553 395
+                         L478 365L451 263Z" />
+              </g>
+              <g class="vehicle-highlight" data-highlight-system="chassis">
+                <ellipse class="vehicle-highlight-region" cx="379" cy="541"
+                         rx="101" ry="103" />
+                <ellipse class="vehicle-highlight-region" cx="887" cy="419"
+                         rx="65" ry="68" />
+              </g>
+              <g class="vehicle-highlight" data-highlight-system="body">
+                <path class="vehicle-highlight-region"
+                      d="M24 402Q32 376 55 353L109 337L250 286L342 108
+                         Q366 76 408 57Q445 41 474 38L930 85Q953 88 958 113
+                         L972 365Q973 386 960 403L950 447Q942 382 922 351
+                         Q907 329 884 329Q850 328 832 365Q819 392 817 459
+                         L655 508L493 548Q487 468 463 416Q439 367 382 365
+                         Q324 364 294 410Q273 443 269 506L226 540L73 541
+                         Q49 526 42 504Z" />
+              </g>
+              <g class="vehicle-highlight" data-highlight-system="diagnostics">
+                <path class="vehicle-highlight-region"
+                      d="M24 402Q32 376 55 353L109 337L250 286L342 108
+                         Q366 76 408 57Q445 41 474 38L930 85Q953 88 958 113
+                         L972 365Q973 386 960 403L950 447Q942 382 922 351
+                         Q907 329 884 329Q850 328 832 365Q819 392 817 459
+                         L655 508L493 548Q487 468 463 416Q439 367 382 365
+                         Q324 364 294 410Q273 443 269 506L226 540L73 541
+                         Q49 526 42 504Z" />
+              </g>
+            </svg>
+            <figcaption>2016 SPRINTER 2500 · W906 / NCV3</figcaption>
+          </figure>
+        </div>
+
+        <div class="system-legend" aria-label="System status legend">
+          <span><i data-status="healthy"></i>Healthy</span>
+          <span><i data-status="warning"></i>Warning</span>
+          <span><i data-status="critical"></i>Critical</span>
+          <span><i data-status="no-data"></i>No data</span>
+          <span><i data-status="offline"></i>Offline / stale</span>
+        </div>
+      </div>
+
+      <section class="system-details" id="system-details" aria-live="polite">
+        <div class="system-details-head">
+          <div>
+            <span class="system-domain" id="system-domain">POWERTRAIN</span>
+            <h2 id="system-title">ENGINE</h2>
+            <p id="system-description">Engine operating state and thermal health.</p>
+          </div>
+          <div class="system-status-pill" id="system-status-pill" data-status="no-data">
+            <span class="status-dot"></span>
+            <strong id="system-status-label">NO DATA</strong>
+          </div>
+        </div>
+        <div class="system-path" id="system-path">Vehicle.Powertrain.CombustionEngine</div>
+        <div class="system-summary" id="system-summary">
+          Enable PID polling to populate live system evidence.
+        </div>
+        <div class="system-readings" id="system-readings"></div>
+        <p class="system-disclaimer">
+          Status reflects observed OBD signals and simple range checks—not a complete
+          manufacturer diagnosis. Systems without supported signals remain “No data.”
+        </p>
+      </section>
+        </div>
+
+        <aside class="vehicle-alert-rail" aria-labelledby="vehicle-alert-title">
+          <div class="vehicle-alert-head">
+            <div>
+              <span class="eyebrow">OPERATOR VIEW</span>
+              <h2 id="vehicle-alert-title">WARNINGS</h2>
+            </div>
+            <span class="vehicle-alert-count" id="vehicle-alert-count">0 ACTIVE</span>
+          </div>
+          <p class="vehicle-alert-note">
+            Active heuristic and diagnostic warnings, ordered by severity.
+          </p>
+          <div class="vehicle-alert-list" id="vehicle-alert-list"
+               aria-live="polite"></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== FOOTER CONTROLS ===================== -->
+  <footer class="controls">
+    <div class="ctrl-group">
+      <button id="btn-pause" class="btn">Pause</button>
+      <button id="btn-resume" class="btn" disabled>Resume</button>
+      <button id="btn-clear" class="btn">Clear</button>
+      <button id="btn-record" class="btn">Start Log</button>
+      <button id="btn-discover" class="btn btn-accent">Discover PIDs</button>
+      <button id="btn-report" class="btn btn-accent">Export Report</button>
+    </div>
+
+    <label class="poll-toggle" id="poll-toggle">
+      <input type="checkbox" id="poll-check" />
+      <span class="track"><span class="thumb"></span></span>
+      <span class="poll-label" id="poll-label">PID polling off</span>
+    </label>
+
+    <div class="safety-note">
+      ⚠ Polling starts automatically when connected and <b>transmits</b> request
+      frames — use while parked. Toggle PID polling off to stay hardware-silent.
+    </div>
+  </footer>
+
+  <!-- ===================== TELEMETRY DETAIL OVERLAY ===================== -->
+  <div class="overlay" id="telemetry-overlay" hidden>
+    <section class="overlay-panel telemetry-detail-panel" role="dialog"
+             aria-modal="true" aria-labelledby="telemetry-detail-title">
+      <div class="overlay-head">
+        <div>
+          <span class="telemetry-detail-kicker" id="telemetry-detail-code">MODE 01</span>
+          <h2 id="telemetry-detail-title">TELEMETRY DETAIL</h2>
+        </div>
+        <button class="btn" id="btn-telemetry-close">Close</button>
+      </div>
+      <div class="telemetry-detail-body">
+        <div class="telemetry-detail-reading" id="telemetry-detail-reading"
+             data-status="live">
+          <div>
+            <span>CURRENT READING</span>
+            <strong>
+              <span id="telemetry-detail-value">—</span>
+              <small id="telemetry-detail-unit"></small>
+            </strong>
+          </div>
+          <span class="telemetry-detail-health" id="telemetry-detail-health">LIVE</span>
+        </div>
+
+        <canvas class="telemetry-detail-spark" id="telemetry-detail-spark"
+                aria-label="Recent value trend"></canvas>
+
+        <div class="telemetry-detail-copy">
+          <p id="telemetry-detail-summary"></p>
+          <p><b>What to watch:</b> <span id="telemetry-detail-watch"></span></p>
+          <p class="telemetry-detail-note" id="telemetry-detail-note"></p>
+        </div>
+
+        <div class="telemetry-detail-grid">
+          <div><span>ECU</span><strong id="telemetry-detail-ecu">—</strong></div>
+          <div><span>PID SOURCE</span><strong id="telemetry-detail-source">—</strong></div>
+          <div><span>SYSTEMS</span><strong id="telemetry-detail-systems">—</strong></div>
+          <div><span>LAST UPDATE</span><strong id="telemetry-detail-age">—</strong></div>
+          <div><span>RECENT RANGE</span><strong id="telemetry-detail-range">—</strong></div>
+          <div><span>SAMPLES SHOWN</span><strong id="telemetry-detail-samples">0</strong></div>
+        </div>
+
+        <p class="telemetry-detail-disclaimer">
+          Recent range means values observed in this app window—not the manufacturer's
+          acceptable range. These hints are context for troubleshooting, not a diagnosis.
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===================== DISCOVERY RESULTS OVERLAY ===================== -->
+  <div class="overlay" id="discover-overlay" hidden>
+    <div class="overlay-panel">
+      <div class="overlay-head">
+        <h2>PID AVAILABILITY</h2>
+        <button class="btn" id="btn-discover-close">Close</button>
+      </div>
+      <p class="overlay-note">
+        Each module's answer to the Mode 01 “supported PIDs” query.
+        <span class="legend"><span class="sw decoded"></span> decoded by this app</span>
+        <span class="legend"><span class="sw undecoded"></span> supported, decoder not implemented</span>
+        <span class="legend"><span class="sw unavailable"></span> not available from this ECU</span>
+      </p>
+      <div class="overlay-body" id="discover-content"></div>
+    </div>
+  </div>
+
+  <script src="core.js?v=13"></script>
+  <script src="app.js?v=14"></script>
+</body>
+</html>

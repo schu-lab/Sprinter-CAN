@@ -1,0 +1,10 @@
+node_modules/
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+sprinter-can-report_*.html
+vendor/
+runtime/
+dist/
+dist-pi/

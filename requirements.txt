@@ -1,0 +1,4 @@
+# Python collector-service dependencies.
+# The kvaser backend talks to Kvaser CANlib, which must be installed
+# separately (Kvaser Drivers for Windows / linuxcan on Linux).
+python-can>=4.6,<5

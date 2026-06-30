@@ -1,0 +1,28 @@
+SPRINTER CAN — RASPBERRY PI
+================================
+
+1. Use a 64-bit Raspberry Pi OS installation on a Raspberry Pi 4 or newer.
+2. Copy Sprinter-CAN-1.0.0-linux-arm64.AppImage to the Pi desktop.
+3. Make it executable once:
+
+     chmod +x Sprinter-CAN-1.0.0-linux-arm64.AppImage
+
+4. Double-click the AppImage. It opens in the 1280x800 touchscreen kiosk.
+
+The AppImage contains Electron, the dashboard, collector, an ARM64 Python
+runtime, and the Python packages used by the collector.
+
+KVASER U100 DRIVER — ONE-TIME SETUP
+------------------------------------
+
+The Kvaser LinuxCAN kernel driver cannot be embedded in an AppImage because it
+must be compiled for the Pi's currently running kernel. Before live use, run:
+
+     chmod +x install-kvaser-driver-pi.sh
+     ./install-kvaser-driver-pi.sh
+
+The helper follows Kvaser's Raspberry Pi LinuxCAN/DKMS procedure, requires an
+internet connection and sudo password, and asks you to reboot when complete.
+
+You can open the AppImage before installing the driver; the interface will run
+and explain that live vehicle data is offline.

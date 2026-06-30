@@ -1,0 +1,104 @@
+{
+  "name": "sprinter-can-telemetry",
+  "version": "1.0.0",
+  "description": "Live CAN telemetry, session logging, replay, and health dashboard for a 2016 Mercedes Sprinter.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "demo": "electron . --demo",
+    "kiosk": "electron . --kiosk",
+    "kiosk:demo": "electron . --kiosk --demo",
+    "vendor:python": "node scripts/vendor-python.mjs",
+    "build:pi": "npm run vendor:python && bash scripts/vendor-python-runtime.sh && electron-builder --linux AppImage --arm64 --publish never",
+    "service": "python -B can_service.py",
+    "service:demo": "python -B can_service.py --demo",
+    "replay": "electron . --replay",
+    "test": "npm run test:js && npm run test:py",
+    "test:js": "node --test tests/*.test.js",
+    "test:py": "python -B -m unittest discover -s tests -p \"test_*.py\"",
+    "check": "node --check main.js && node --check renderer/core.js && node --check renderer/app.js && npm test"
+  },
+  "author": "",
+  "license": "MIT",
+  "build": {
+    "appId": "com.sprintercan.telemetry",
+    "productName": "Sprinter CAN",
+    "artifactName": "Sprinter-CAN-${version}-linux-${arch}.${ext}",
+    "asar": true,
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "can_service.py",
+        "to": "app/can_service.py"
+      },
+      {
+        "from": "can_bridge.py",
+        "to": "app/can_bridge.py"
+      },
+      {
+        "from": "config.json",
+        "to": "app/config.json"
+      },
+      {
+        "from": "sprinter_can",
+        "to": "app/sprinter_can",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "renderer",
+        "to": "app/renderer"
+      },
+      {
+        "from": "vendor/python",
+        "to": "app/vendor/python"
+      },
+      {
+        "from": "runtime/python",
+        "to": "app/runtime/python"
+      },
+      {
+        "from": "scripts/install-kvaser-driver-pi.sh",
+        "to": "install-kvaser-driver-pi.sh"
+      }
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "executableName": "sprinter-can",
+      "desktop": {
+        "entry": {
+          "Name": "Sprinter CAN",
+          "Comment": "Sprinter CAN telemetry and vehicle health interface",
+          "Categories": "Utility;Automotive;"
+        }
+      }
+    },
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
+    "appImage": {
+      "compression": "zstd"
+    }
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "devDependencies": {
+    "electron": "^42.5.0",
+    "electron-builder": "^26.15.3"
+  }
+}
